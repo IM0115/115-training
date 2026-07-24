@@ -50,6 +50,25 @@ public class OrderServiceCancelTests
     }
 
     [Fact]
+    public async Task CancelOrder_ActiveOrder_RestoresProductStock()
+    {
+        using var db = TestSetup.CreateContext();
+        var service = TestSetup.CreateOrderService(db);
+        var customer = TestSetup.AddCustomer(db);
+        var product = TestSetup.AddProduct(db, stock: 10);
+
+        var created = await service.CreateOrderAsync(customer.Id, new[] { new NewOrderLine(product.Id, 3) });
+        Assert.True(created.Success);
+        Assert.Equal(7, db.Products.Single(p => p.Id == product.Id).StockQuantity); // 建單後庫存被扣
+
+        var result = await service.CancelOrderAsync(created.Value!.Id);
+
+        Assert.True(result.Success);
+        // 取消後庫存必須加回到原本的 10（bug 時因補庫存為死碼，會停在 7）
+        Assert.Equal(10, db.Products.Single(p => p.Id == product.Id).StockQuantity);
+    }
+
+    [Fact]
     public async Task CancelOrder_NotFound_Fails()
     {
         using var db = TestSetup.CreateContext();
