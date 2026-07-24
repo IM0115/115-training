@@ -41,6 +41,30 @@ public class OrderServiceQueryTests
     }
 
     [Fact]
+    public async Task GetOrders_FirstPage_ReturnsNewestOrdersAndLastPageNotSkipped()
+    {
+        using var db = TestSetup.CreateContext();
+        var service = TestSetup.CreateOrderService(db);
+        var customer = TestSetup.AddCustomer(db);
+
+        // 45 筆訂單，CreatedAt 遞減；i=0 為最新。分頁應 DESC，最新的在第 1 頁。
+        for (var i = 0; i < 45; i++)
+            db.Orders.Add(new Order { CustomerId = customer.Id, Status = OrderStatus.Confirmed, CreatedAt = DateTime.UtcNow.AddMinutes(-i) });
+        db.SaveChanges();
+
+        var newestCreatedAt = db.Orders.Max(o => o.CreatedAt);
+
+        var firstPage = await service.GetOrdersAsync(1, 20, null);
+        // 第 1 頁必須包含最新的訂單（bug 時第 1 頁被整頁 Skip 掉，找不到最新訂單）
+        Assert.Equal(20, firstPage.Items.Count);
+        Assert.Equal(newestCreatedAt, firstPage.Items.First().CreatedAt);
+
+        // 最後一頁（第 3 頁）應有剩下的 5 筆，而非空白（bug 時會溢位成空）
+        var lastPage = await service.GetOrdersAsync(3, 20, null);
+        Assert.Equal(5, lastPage.Items.Count);
+    }
+
+    [Fact]
     public async Task GetCustomerOrders_ReturnsOnlyThatCustomersOrders()
     {
         using var db = TestSetup.CreateContext();
