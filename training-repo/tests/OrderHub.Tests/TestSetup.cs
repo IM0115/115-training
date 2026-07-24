@@ -53,4 +53,30 @@ public static class TestSetup
         db.SaveChanges();
         return product;
     }
+
+    public static Order AddOrder(
+        OrderHubDbContext db,
+        int customerId,
+        DateTime createdAt,
+        OrderStatus status,
+        params (int productId, int quantity)[] items)
+    {
+        var order = new Order
+        {
+            CustomerId = customerId,
+            Status = status,
+            CreatedAt = createdAt,
+            Items = items
+                .Select(i => new OrderItem
+                {
+                    ProductId = i.productId,
+                    Quantity = i.quantity,
+                    UnitPriceSnapshot = 100m
+                })
+                .ToList()
+        };
+        db.Orders.Add(order);
+        db.SaveChanges();
+        return order;
+    }
 }
