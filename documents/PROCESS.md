@@ -136,6 +136,47 @@ Claude Code（模型 Opus 4.8）
 4. 我會帶走的一句話
  - 寫 MCP 工具真正在做的事，是**把「查這件事要知道的所有前提」封裝起來**——表名、連線、過濾條件。before 的三步不是「agent 比較笨」，是那三個前提沒人給它。
 
+練習 4（會改資料的工具：cancel_order）
+
+1. annotations 如標註，三個唯讀工具顯示 read-only
+ - 沒開 Inspector，改用 stdio 直接跟 server 對話（送 `initialize` + `tools/list`）撈出來的原始 JSON：
+
+   ```
+   customer_orders: {"readOnlyHint":true}
+   get_order:       {"readOnlyHint":true}
+   low_stock:       {"readOnlyHint":true}
+   cancel_order:    {"destructiveHint":true,"idempotentHint":false}
+   ```
+
+   `cancel_order` 沒有 `readOnlyHint` 是對的——依 spec 預設就是 `false`。Inspector 那一頁看的就是這份東西，寫個 30 行 script 也拿得到，不一定要開瀏覽器。
+
+2. 權限確認提示：按允許之前資料不會被動到
+ - `.claude/settings.json` 的 `allow` 清單裡**只有 Bash 指令、沒有任何 MCP 工具**，所以工具呼叫走的是預設的逐次確認——`cancel_order` 每一次都要人按過才送得出去。
+ - 這裡有個一開始想不到的重點：**annotations 是給 client 看的提示，不是 server 的防線**。`destructiveHint` 只影響 Claude Code 要不要跳確認；真正擋住不該取消的訂單的，是 `OrderService.CancelOrderAsync` 裡的狀態檢查。換一個不理會 annotations 的 client，工具照樣叫得動——所以授權檢查不能外包給對面。
+
+3. 取消一筆待處理訂單，回 `/Products` 確認庫存回補
+ - 用 #206（練習 0 用 Playwright 建的那筆，拿它收尾剛好）。前後對照：
+
+   | | 訂單 #206 狀態 | `/Products` 頁面 SKU-1002 庫存 |
+   |---|---|---|
+   | 取消前 | Pending | **100** |
+   | 取消後 | Cancelled | **102** |
+
+   +2 正好等於訂單數量（極光 機械鍵盤 × 2）。這就是活動 1 客訴 3 修好的那個行為，繞過網頁、從 MCP 工具進來也一樣成立——因為規則長在 service 層，不是長在 Controller。
+
+4. 重複取消／已出貨訂單：清楚的拒絕訊息，不是 exception dump
+ - `cancel_order(206)` 第二次 → `取消失敗：狀態為 Cancelled 的訂單不可取消`
+ - `cancel_order(194)`（Shipped）→ `取消失敗：狀態為 Shipped 的訂單不可取消`
+ - `cancel_order(99999)`（不存在）→ `取消失敗：找不到指定的訂單`
+ - 額外確認一件沒人叫我測的事：**第二次取消失敗之後，庫存還是 102，沒有再加一次**。`idempotentHint: false` 說的是「重複呼叫結果會不同」，但這裡的「不同」是第二次被拒絕，不是庫存被重複回補——service 的狀態檢查先擋掉了。如果當初把回補寫在工具裡而不是 service 裡，這一格就會變成 104。
+
+5. 過程中真的踩到的坑
+ - **`dotnet build` 失敗，錯誤是檔案被鎖住**：`OrderHub.Core.dll` 正被 `OrderHub.Mcp (9100)` 佔用——那就是 Claude Code 正在跑的 MCP server。要先 `taskkill //PID 9100 //F` 才編得動，編完再 `/mcp` reconnect 才載入新工具。
+ - 這其實是活動 1 那條「驗證前先確認跑的是新 build」的 MCP 版：**改完工具程式碼，桌上那個 server 還是舊的**。差別在網站是我自己開的、看得到；MCP server 是 client 幫我開的，很容易忘記它存在。
+
+6. 我會帶走的一句話
+ - 工具只做轉接（5 行），規則全留在 service——好處在第 4 點那一格具體看得到：規則只有一份，所以「從網頁取消」和「從 agent 取消」不可能長出兩種行為。
+
 ---
 
 ## 附錄：值得留下的對話片段
