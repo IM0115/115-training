@@ -104,6 +104,38 @@ Claude Code（模型 Opus 4.8）
  - **差在哪**：以前流程是「我操作 → 我觀察 → 我把數字餵給 agent」，agent 只能從第 ③ 步接手；接上 Playwright MCP 之後它從第 ① 步就能自己來，我的角色從「操作員」變成「看結果的人」。
  - **沒有變的事**（別誤以為全自動）：網站還是要先自己跑起來（這次是我事先開好的），活動 1 學到的「驗證前先確認跑的是新 build」照樣要自己顧。另外 agent 實際判讀的是頁面的 accessibility snapshot（元素樹），**不是那張圖**——截圖是給人看的證據，不是它的判斷來源，所以純視覺的問題（跑版、顏色、被遮住）它未必看得出來。
 
+練習 3（註冊給 agent，before/after 對照）
+
+1. `/mcp` 能看到 orderhub server 與三個工具
+ - 可以。要點：`.mcp.json` 只在 **Claude Code 從 `training-repo` 啟動**時才載入。before 那個 session 的工作目錄是上層的 `D:\AITraining\115-training`，所以拿不到 orderhub 工具；`cd training-repo` 重開一個 session、批准專案 MCP server 之後才看得到 `get_order` / `low_stock` / `customer_orders`。
+
+2. 對照實驗：同一個問題「**哪些商品庫存低於 5？**」
+
+ - **Before（沒有 orderhub 工具，在上層目錄的 session）**——三步 + 一個沒人叫我做的判斷：
+
+   | # | 動作 | 為什麼需要 |
+   |---|---|---|
+   | 1 | 讀 `src/OrderHub.Core/Domain/Product.cs` | 不知道欄位叫什麼（`StockQuantity`? `Stock`?） |
+   | 2 | grep Infrastructure 找 `ToTable` / `DbSet<Product>` | 確認實體對到的表名是 `Products` |
+   | 3 | 手寫 ADO.NET + 原始 SQL（`SELECT Sku, Name, StockQuantity FROM Products WHERE StockQuantity < 5 AND IsActive = 1 ORDER BY StockQuantity`）連 DB 查 | 沒有現成介面可問 |
+
+   結果 5 筆：SKU-1048(2)、SKU-1005(3)、SKU-1023(3)、SKU-1032(4)、SKU-1014(4)。
+   中間還被我攔下來一次——那句 PowerShell 直連 DB 我按了拒絕（因為我在找 `.mcp.json` 為什麼還沒出現），確認過流程才讓它重跑。**「要人核准」本身也是 before 的成本之一**。
+
+ - **After（同一個問題，`cd training-repo` 重開 session）**——一次工具呼叫：
+   `low_stock(threshold=5)` → 直接回 5 筆 JSON，已排序、已排除停售。我輸出的就是那張表，中間沒有讀任何一個檔、沒有碰 DB。
+   （嚴格說是「載入工具 schema + 呼叫」兩步：這個 session 的 MCP 工具是 deferred 的，我先 `ToolSearch` 取回 `low_stock` 的參數說明才呼叫。但這是 client 的載入機制，不是我在繞路找答案。）
+
+3. 兩次真正的差異（不是「快一點」而已）
+
+ - **知識從我身上移到 server 裡**。before 的三步全是在補「這個系統長怎樣」的知識：欄位名、表名、連線字串。after 這些都在 `OrderHubTools.LowStock` 裡寫死了，我只需要知道「有一個工具叫 low_stock，參數是門檻」。
+ - **連線字串是我「碰巧知道」的**。before 那個 session 前面除錯時剛好發現 DB 在 `localhost\MSSQLSERVER2022`。一個全新的 agent 還要多一步去翻 `appsettings.Development.json`——而且很可能先讀了 `appsettings.json` 裡的 `localhost` 然後連錯、以為 DB 掛了。
+ - **`IsActive = 1` 是我自己補的，沒人告訴我**。我是從 `Product.IsActive` 這個欄位推出「應該要排除停售商品」。這一步最危險的不是慢：**漏掉的話結果會多幾筆不該出現的商品，畫面完全正常、不會報錯**。after 版本這條規則長在工具裡（`productRepository.GetActiveAsync()`），我漏不掉。繞遠路的成本是「安靜地答錯」，不是「多花兩分鐘」。
+ - **順序的小差異**：兩次都是同一組 5 筆，但庫存都是 4 的那兩筆順序相反（SQL 給 1032→1014，工具給 1014→1032）。同分沒有次要排序鍵，兩邊都對；如果哪天有人拿這個排名做決策，要在工具裡補一個 tie-break。
+
+4. 我會帶走的一句話
+ - 寫 MCP 工具真正在做的事，是**把「查這件事要知道的所有前提」封裝起來**——表名、連線、過濾條件。before 的三步不是「agent 比較笨」，是那三個前提沒人給它。
+
 ---
 
 ## 附錄：值得留下的對話片段
