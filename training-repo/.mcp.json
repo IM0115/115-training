@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "orderhub": {
+      "command": "dotnet",
+      "args": ["run", "--project", "src/OrderHub.Mcp"],
+      "env": {
+        "ConnectionStrings__Default": "Server=localhost\\MSSQLSERVER2022;Database=OrderHubTraining;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=True"
+      }
+    }
+  }
+}
