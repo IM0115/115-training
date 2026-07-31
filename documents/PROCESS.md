@@ -177,6 +177,45 @@ Claude Code（模型 Opus 4.8）
 6. 我會帶走的一句話
  - 工具只做轉接（5 行），規則全留在 service——好處在第 4 點那一格具體看得到：規則只有一份，所以「從網頁取消」和「從 agent 取消」不可能長出兩種行為。
 
+練習 5（Resources 與 Prompts）
+
+1. Inspector：讀得到 resource、prompt 帶參數展開
+ - 一樣用 stdio 問 server（送 `resources/list`、`resources/read`、`prompts/list`、`prompts/get`）：
+   - `capabilities` 從只有 `tools` 變成 `["logging","prompts","resources","tools"]`
+   - `resources/read orderhub://discount-rules` → 完整 markdown 內容
+   - `prompts/get` 帶 `threshold=3` → 展開成「…（threshold=3）…」；不帶參數 → `threshold=10`，預設值有生效
+ - 沒加新 NuGet 套件：`Microsoft.Extensions.AI`（`ChatMessage` 在裡面）是 `ModelContextProtocol` 的傳遞相依。
+
+2. Resource：`@` 選 `orderhub://discount-rules` 後問「Gold 會員買 1000 元商品應付多少？」
+ - 答 **NT$ 900**，而且**沒有開任何一個檔案**——沒讀 `OrderService.cs`、沒查 DB。
+
+3. Prompt：`/mcp__orderhub__low_stock_report` 一鍵產表
+ - 展開成 server 裡寫的那段話 → 自動呼叫 `low_stock(10)` → 產出 5 筆的採購建議表。合體效果確實成立。
+ - **但這次執行踩出一個設計問題**，比範例本身有價值：prompt 第二句要求「再用其他工具了解這些商品的近期訂單狀況」，而現有工具集**沒有任何一條路從商品走到訂單**（`get_order` 吃訂單 Id、`customer_orders` 吃客戶 Id、`low_stock` 只回 Sku/Name/StockQuantity）。我是去抓 `/Products/LowStock` 頁面才拿到近 30 天售出量——**網頁 UI 比 MCP 工具集知道得多**，`ProductService` 早就算好了，`low_stock` 只是沒投影出來。
+ - 差別有多大：SKU-1005 極光 筆電支架庫存 3，只看庫存排「第二急」；加上「近 30 天賣 0 件」就變成**完全不該補**。少了那一欄，表看起來一樣完整，建議卻是反的。
+ - **教訓：prompt 要求超出 tool 能力範圍時，它不會報錯，會安靜地產出一份看起來很完整的東西。** Prompt 和 tool 是綁在一起設計的，不能各寫各的。
+
+4. 5c 第 3 點的思考
+
+ - **折扣規則用 Resource 給 vs 讓 agent 自己讀 `OrderService.cs`**
+
+   | | agent 自己讀程式碼 | 用 Resource |
+   |---|---|---|
+   | 成本 | 要先找到檔案、讀懂 `GetDiscountRate` 的 switch、還要自己判斷折扣是折在總額還是逐項 | 一句話拿到，0 次檔案讀取 |
+   | 誰能用 | 只有看得到 repo 的人 | 任何接上 server 的人（採購、客服都不用 clone 專案） |
+   | 風險 | 讀到舊分支、讀錯方法、把測試裡的假資料當成規則 | 內容是 server 端統一給的 |
+
+   但**代價很實在**：現在規則有**兩份**——`OrderService.GetDiscountRate` 一份、resource 字串一份。哪天 Gold 改成 85 折而沒人記得改 resource，agent 會非常有自信地算錯，而且不會報錯。這跟練習 1 地雷區「金額別自己算」是同一堂課的第二次點名。想避免就讓 resource 動態組（注入 `IOrderService`，用 `GetDiscountRate` 產出文字），這次照文件先寫靜態版，缺口記在這裡。
+
+ - **Prompt 範本放 server vs 每個人自己打一段話**
+
+   - **每個人自己打**：十個同事十種問法。有人忘了說「排除已取消訂單」、有人門檻打 5 有人打 10，產出的表格欄位還都不一樣——**不一致而且沒人發現不一致**。
+   - **放 server**：問法只有一份、進 git、改一次全隊生效，而且 code review 看得到「這句話被改了」。上面第 3 點那個缺陷就是好例子：因為它在檔案裡，我才能指著第二句說「這句做不到」；如果它只存在某個人的腦袋裡，這個問題會一直在，只是每次換個人踩。
+   - 順帶記一個小刺：`low_stock` 工具的預設門檻 10 和 prompt 的預設 10 是**各寫各的**，改門檻政策要改兩處。跟 resource 那個「兩份真相」是同一個病，只是小一號。
+
+5. 三者的分工（用自己的話）
+ - **Tool = 動作**（要查、要算、要改資料），**Resource = 資料**（讀進 context 當背景知識），**Prompt = 範本**（替使用者把話說好）。判斷方式：要不要打 DB / 有沒有副作用 → Tool；是不是「不管問什麼都該先知道的事」→ Resource；是不是「同一句話大家每週都要打一次」→ Prompt。
+
 ---
 
 ## 附錄：值得留下的對話片段
